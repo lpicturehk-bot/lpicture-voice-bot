@@ -245,11 +245,18 @@ def webhook():
         data = request.get_json(force=True, silent=True) or {}
         print(f"[WEBHOOK] 解析後資料: {json.dumps(data, ensure_ascii=False)[:500]}")
 
-        # 使用強健的提取函數
-        subscriber_id = extract_subscriber_id(data)
-        first_name = data.get("first_name", "") or data.get("name", "") or "朋友"
-        media_url = extract_media_url(data)
-        last_input = extract_text_input(data)
+        # 優先從 URL Query String 讀取（ManyChat URL 變數方式）
+        qs_id = request.args.get("id", "").strip()
+        qs_text = request.args.get("text", "").strip()
+        qs_media = request.args.get("media", "").strip()
+        qs_name = request.args.get("name", "").strip()
+        print(f"[WEBHOOK] Query String: id={qs_id}, text={qs_text[:50] if qs_text else 'EMPTY'}, media={qs_media[:50] if qs_media else 'EMPTY'}")
+
+        # 使用強健的提取函數（Query String 優先，再 fallback 到 JSON Body）
+        subscriber_id = qs_id or extract_subscriber_id(data)
+        first_name = qs_name or data.get("first_name", "") or data.get("name", "") or "朋友"
+        media_url = qs_media or extract_media_url(data)
+        last_input = qs_text or extract_text_input(data)
 
         print(f"[WEBHOOK] subscriber_id={subscriber_id}, first_name={first_name}")
         print(f"[WEBHOOK] media_url={media_url[:80] if media_url else 'EMPTY'}")
