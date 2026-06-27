@@ -108,17 +108,25 @@ def send_manychat_message(subscriber_id: str, text: str):
 
 def extract_subscriber_id(data: dict) -> str:
     """從各種格式的 ManyChat JSON 中提取 subscriber_id"""
+    invalid_values = ["None", "null", "{No field selected}", "", " "]
     # 嘗試各種可能的欄位名稱
     for key in ["id", "subscriber_id", "user_id", "contact_id"]:
         val = data.get(key)
-        if val and str(val).strip():
+        if val and str(val).strip() and str(val).strip() not in invalid_values:
             return str(val).strip()
     
     # 嘗試從 Full Contact Data 格式中提取
     if "data" in data and isinstance(data["data"], dict):
-        for key in ["id", "subscriber_id"]:
+        for key in ["id", "subscriber_id", "contact_id"]:
             val = data["data"].get(key)
-            if val and str(val).strip():
+            if val and str(val).strip() and str(val).strip() not in invalid_values:
+                return str(val).strip()
+    
+    # 嘗試從 contact 嵌套格式中提取
+    if "contact" in data and isinstance(data["contact"], dict):
+        for key in ["id", "subscriber_id"]:
+            val = data["contact"].get(key)
+            if val and str(val).strip() and str(val).strip() not in invalid_values:
                 return str(val).strip()
     
     return ""
@@ -126,19 +134,37 @@ def extract_subscriber_id(data: dict) -> str:
 
 def extract_text_input(data: dict) -> str:
     """從各種格式的 ManyChat JSON 中提取用戶輸入文字"""
-    for key in ["last_input_text", "last_input", "text", "message", "input"]:
+    invalid_values = ["None", "null", "{No field selected}", "", " "]
+    for key in ["last_input_text", "last_text_input", "last_input", "text", "message", "input", "body"]:
         val = data.get(key)
-        if val and str(val).strip() and str(val).strip() not in ["None", "null", "{No field selected}"]:
+        if val and str(val).strip() and str(val).strip() not in invalid_values:
             return str(val).strip()
+    # 嘗試嵌套格式
+    if "data" in data and isinstance(data["data"], dict):
+        for key in ["last_input_text", "last_text_input", "text"]:
+            val = data["data"].get(key)
+            if val and str(val).strip() and str(val).strip() not in invalid_values:
+                return str(val).strip()
     return ""
 
 
 def extract_media_url(data: dict) -> str:
     """從各種格式的 ManyChat JSON 中提取媒體 URL"""
-    for key in ["last_input_file_url", "media_url", "file_url", "audio_url", "voice_url"]:
+    invalid_values = ["None", "null", "{No field selected}", "", " "]
+    for key in ["last_input_file_url", "media_url", "file_url", "audio_url", "voice_url", "attachment_url"]:
         val = data.get(key)
-        if val and str(val).strip() and str(val).strip() not in ["None", "null", "{No field selected}"]:
-            return str(val).strip()
+        if val and str(val).strip() and str(val).strip() not in invalid_values:
+            url_val = str(val).strip()
+            if url_val.startswith("http"):
+                return url_val
+    # 嘗試嵌套格式
+    if "data" in data and isinstance(data["data"], dict):
+        for key in ["last_input_file_url", "media_url", "file_url"]:
+            val = data["data"].get(key)
+            if val and str(val).strip() and str(val).strip() not in invalid_values:
+                url_val = str(val).strip()
+                if url_val.startswith("http"):
+                    return url_val
     return ""
 
 
@@ -228,7 +254,7 @@ def process_in_background(subscriber_id: str, media_url: str, last_input: str, f
 
 @app.route("/", methods=["GET"])
 def home():
-    return jsonify({"status": "ok", "message": "Lpicture Voice Bot is running! v2.0"}), 200
+    return jsonify({"status": "ok", "message": "Lpicture Voice Bot is running! v3.0"}), 200
 
 
 @app.route("/webhook", methods=["GET", "POST"])
@@ -240,17 +266,21 @@ def webhook():
     try:
         # 嘗試解析 JSON，支援各種格式
         raw_body = request.get_data(as_text=True)
-        print(f"[WEBHOOK] 原始 Body: {raw_body[:1000]}")
+        print(f"[WEBHOOK] ===== 收到新請求 =====")
+        print(f"[WEBHOOK] Content-Type: {request.content_type}")
+        print(f"[WEBHOOK] 原始 Body: {raw_body[:2000]}")
         
         data = request.get_json(force=True, silent=True) or {}
-        print(f"[WEBHOOK] 解析後資料: {json.dumps(data, ensure_ascii=False)[:500]}")
+        print(f"[WEBHOOK] 解析後資料鍵值: {list(data.keys())}")
+        print(f"[WEBHOOK] 解析後資料: {json.dumps(data, ensure_ascii=False)[:1000]}")
 
         # 優先從 URL Query String 讀取（ManyChat URL 變數方式）
         qs_id = request.args.get("id", "").strip()
         qs_text = request.args.get("text", "").strip()
         qs_media = request.args.get("media", "").strip()
         qs_name = request.args.get("name", "").strip()
-        print(f"[WEBHOOK] Query String: id={qs_id}, text={qs_text[:50] if qs_text else 'EMPTY'}, media={qs_media[:50] if qs_media else 'EMPTY'}")
+        if qs_id or qs_text or qs_media:
+            print(f"[WEBHOOK] Query String 模式: id={qs_id}, text={qs_text[:50] if qs_text else 'EMPTY'}, media={qs_media[:50] if qs_media else 'EMPTY'}")
 
         # 使用強健的提取函數（Query String 優先，再 fallback 到 JSON Body）
         subscriber_id = qs_id or extract_subscriber_id(data)
@@ -258,7 +288,7 @@ def webhook():
         media_url = qs_media or extract_media_url(data)
         last_input = qs_text or extract_text_input(data)
 
-        print(f"[WEBHOOK] subscriber_id={subscriber_id}, first_name={first_name}")
+        print(f"[WEBHOOK] 提取結果: subscriber_id={subscriber_id}, first_name={first_name}")
         print(f"[WEBHOOK] media_url={media_url[:80] if media_url else 'EMPTY'}")
         print(f"[WEBHOOK] last_input={last_input[:80] if last_input else 'EMPTY'}")
 
@@ -273,6 +303,9 @@ def webhook():
             print(f"[WEBHOOK] 背景執行緒已啟動")
         else:
             print(f"[WEBHOOK] 跳過背景處理: subscriber_id={subscriber_id}, has_media={bool(media_url)}, has_text={bool(last_input)}")
+            if not subscriber_id:
+                print(f"[WEBHOOK] ⚠️ 警告：無法提取 subscriber_id！請檢查 ManyChat 設定")
+                print(f"[WEBHOOK] 完整資料: {json.dumps(data, ensure_ascii=False)[:500]}")
 
         # 立即回應 200 OK（必須在 10 秒內）
         return jsonify({"status": "ok"}), 200
@@ -293,6 +326,7 @@ def debug():
         "status": "ok",
         "raw_body": raw_body[:2000],
         "parsed_data": data,
+        "data_keys": list(data.keys()),
         "extracted": {
             "subscriber_id": extract_subscriber_id(data),
             "first_name": data.get("first_name", ""),
@@ -301,6 +335,27 @@ def debug():
         }
     }
     print(f"[DEBUG] {json.dumps(result, ensure_ascii=False)[:1000]}")
+    return jsonify(result), 200
+
+
+@app.route("/echo", methods=["POST", "GET"])
+def echo():
+    """Echo 端點 - 回傳收到的所有資料（用於調試 ManyChat 發送的格式）"""
+    raw_body = request.get_data(as_text=True)
+    data = request.get_json(force=True, silent=True) or {}
+    args = dict(request.args)
+    headers = dict(request.headers)
+    
+    result = {
+        "status": "ok",
+        "method": request.method,
+        "query_string": args,
+        "body_raw": raw_body[:2000],
+        "body_parsed": data,
+        "body_keys": list(data.keys()),
+        "headers": {k: v for k, v in headers.items() if k.lower() not in ["authorization", "cookie"]}
+    }
+    print(f"[ECHO] {json.dumps(result, ensure_ascii=False)[:2000]}")
     return jsonify(result), 200
 
 
@@ -317,5 +372,5 @@ def test_send():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    print(f"🚀 Lpicture Voice Bot v2.0 啟動中... Port {port}")
+    print(f"🚀 Lpicture Voice Bot v3.0 啟動中... Port {port}")
     app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
