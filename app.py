@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Lpicture 高才班 WhatsApp 語音訊息處理服務（非同步版本）
-接收 ManyChat Webhook → 立即回應 200 OK → 背景處理語音 → ManyChat API 回覆
+Lpicture 高才班 WhatsApp 聊天機械人（非同步版本）
+接收 ManyChat Webhook → 立即回應 200 OK → 背景處理語音/文字 → ManyChat API 回覆
 """
 
 import os
@@ -22,27 +22,63 @@ client = OpenAI(
 # ManyChat API Token
 MANYCHAT_API_TOKEN = os.environ.get("MANYCHAT_API_TOKEN", "5050783:ecad251cad044a3b02714425dc66e7ca")
 
-# Lpicture 高才班課程資訊
-SYSTEM_PROMPT = """你係 Lpicture 高才班嘅智能助理，代表子龍老師回覆學員查詢。
+# ============================================================
+# Lpicture 高才班 銷售漏斗 System Prompt
+# ============================================================
+SYSTEM_PROMPT = """你係 Lpicture 高才班嘅智能助理「小龍」，代表子龍老師回覆潛在學員查詢。
+你嘅目標係：透過友善對話，引導對方一步一步成為付費學員。
 
 【關於 Lpicture 高才班】
 Lpicture 係一個專注於 AI 工具、WhatsApp 自動化、影片製作等實用技能嘅培訓課程。
-講師：子龍
-課程特色：陪你做到先下課、即學即用、完全免費工具
+講師：子龍（業界10年經驗，教過超過500名學員）
+課程特色：陪你做到先下課、即學即用、完全免費工具、小班教學
 
 【最新課程】
 課程名稱：免費無人駕駛 WhatsApp 炸 PM班
-日期：7月7日
-限額：30人（額滿即止）
+日期：7月7日（星期一）晚上8時
+地點：Zoom 網上課堂
+限額：30人（額滿即止，已有18人報名）
 費用：$500（見習生優惠：完成課程返還$300，實際只需$200）
 報名方法：入group → https://chat.whatsapp.com/JfFZdFuy0PAG7bGBOVT1Zo
 
+【銷售漏斗引導策略 - 非常重要！】
+你要根據對話情況，循序漸進地引導對方：
+
+第一步 - 建立興趣：
+- 如果對方問「係咩課程」或「有咩學」，先講課程亮點，然後問「你而家係做咩行業嘅？」
+- 了解對方背景，讓回覆更個人化
+
+第二步 - 激發需求：
+- 如果對方表示有興趣，問「你而家有冇用緊任何 AI 工具？」
+- 根據答案，解釋點解呢個課程對佢特別有用
+
+第三步 - 消除疑慮：
+- 如果對方問費用，強調「見習生優惠」：完成課程返還$300，實際只需$200
+- 如果對方猶豫，提醒「只剩12個名額」製造緊迫感
+
+第四步 - 促成行動：
+- 最後一定要引導：「你而家入埋個 group 先，入面有詳細資料：https://chat.whatsapp.com/JfFZdFuy0PAG7bGBOVT1Zo」
+- 或者：「你想我幫你登記名額？只需要留低你個名同電話就得！」
+
 【回覆原則】
-1. 用廣東話回覆，語氣親切友善
-2. 回覆要簡短清晰，不要太長
-3. 如果問到課程，提供上述資訊
-4. 如果問題超出範圍，叫對方直接聯絡子龍老師
-5. 不要捏造任何資訊"""
+1. 用廣東話回覆，語氣親切、有溫度，好似朋友咁
+2. 每次回覆不超過150字，保持對話感
+3. 每次回覆結尾一定要有一個問題或行動呼籲（CTA）
+4. 如果問到課程以外嘅問題，先回答，然後自然地帶回課程話題
+5. 不要捏造任何資訊，如果唔知，叫對方直接問子龍老師
+
+【常見問題回覆】
+Q: 係咩課程？
+A: 呢個係「免費無人駕駛 WhatsApp 炸 PM班」！教你用 AI 自動化幫你做 WhatsApp 行銷，完全唔需要寫程式。你係做咩生意嘅？
+
+Q: 幾錢？
+A: 課程費用係$500，但有個特別優惠：完成課程可以返還$300，即係實際只需$200！而且名額唔多，你想了解更多嗎？
+
+Q: 幾時？
+A: 7月7日（星期一）晚上8時，Zoom 網上進行，唔需要出門！你方唔方便？
+
+Q: 我唔識電腦/AI
+A: 完全唔需要基礎！子龍老師會由零開始教，陪你做到識為止。好多學員都係零基礎入來，最後都做到！你想試試嗎？"""
 
 
 def send_manychat_message(subscriber_id: str, text: str):
@@ -64,24 +100,65 @@ def send_manychat_message(subscriber_id: str, text: str):
     }
     try:
         response = requests.post(url, headers=headers, json=payload, timeout=15)
-        print(f"[ManyChat] 發送結果: {response.status_code} - {response.text[:200]}")
+        print(f"[ManyChat] 發送結果: {response.status_code} - {response.text[:300]}")
         return response.json()
     except Exception as e:
         print(f"[ManyChat] 發送失敗: {e}")
 
 
+def extract_subscriber_id(data: dict) -> str:
+    """從各種格式的 ManyChat JSON 中提取 subscriber_id"""
+    # 嘗試各種可能的欄位名稱
+    for key in ["id", "subscriber_id", "user_id", "contact_id"]:
+        val = data.get(key)
+        if val and str(val).strip():
+            return str(val).strip()
+    
+    # 嘗試從 Full Contact Data 格式中提取
+    if "data" in data and isinstance(data["data"], dict):
+        for key in ["id", "subscriber_id"]:
+            val = data["data"].get(key)
+            if val and str(val).strip():
+                return str(val).strip()
+    
+    return ""
+
+
+def extract_text_input(data: dict) -> str:
+    """從各種格式的 ManyChat JSON 中提取用戶輸入文字"""
+    for key in ["last_input_text", "last_input", "text", "message", "input"]:
+        val = data.get(key)
+        if val and str(val).strip() and str(val).strip() not in ["None", "null", "{No field selected}"]:
+            return str(val).strip()
+    return ""
+
+
+def extract_media_url(data: dict) -> str:
+    """從各種格式的 ManyChat JSON 中提取媒體 URL"""
+    for key in ["last_input_file_url", "media_url", "file_url", "audio_url", "voice_url"]:
+        val = data.get(key)
+        if val and str(val).strip() and str(val).strip() not in ["None", "null", "{No field selected}"]:
+            return str(val).strip()
+    return ""
+
+
 def process_in_background(subscriber_id: str, media_url: str, last_input: str, first_name: str):
     """在背景執行緒處理語音或文字"""
     try:
-        if media_url and media_url.strip():
+        if media_url and media_url.strip() and media_url.startswith("http"):
             # 處理語音訊息
-            print(f"[BG] 下載語音: {media_url}")
-            response = requests.get(media_url, timeout=30)
-            response.raise_for_status()
+            print(f"[BG] 下載語音: {media_url[:100]}")
+            try:
+                response = requests.get(media_url, timeout=30)
+                response.raise_for_status()
+            except Exception as e:
+                print(f"[BG] 下載語音失敗: {e}")
+                send_manychat_message(subscriber_id, "😅 唔好意思，我收唔到你嘅語音，可以用文字再說一次嗎？")
+                return
 
             # 判斷副檔名
             suffix = ".ogg"
-            for ext in [".mp4", ".mp3", ".wav", ".m4a", ".ogg"]:
+            for ext in [".mp4", ".mp3", ".wav", ".m4a", ".ogg", ".webm"]:
                 if ext in media_url.lower():
                     suffix = ext
                     break
@@ -102,7 +179,7 @@ def process_in_background(subscriber_id: str, media_url: str, last_input: str, f
                 print(f"[BG] 轉錄結果: {text}")
 
                 if not text:
-                    send_manychat_message(subscriber_id, "😅 唔好意思，我聽唔清楚，可以再說一次嗎？")
+                    send_manychat_message(subscriber_id, "😅 唔好意思，我聽唔清楚，可以再說一次或用文字嗎？")
                     return
 
                 # 用 ChatGPT 生成回覆
@@ -110,12 +187,12 @@ def process_in_background(subscriber_id: str, media_url: str, last_input: str, f
                     model="gpt-4o-mini",
                     messages=[
                         {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": text}
+                        {"role": "user", "content": f"[語音訊息轉文字] {text}"}
                     ],
-                    max_tokens=300
+                    max_tokens=400
                 )
                 reply = chat.choices[0].message.content
-                full_reply = f"🎙️ 我聽到你講：\n「{text}」\n\n{reply}"
+                full_reply = f"🎙️ 我聽到你講：「{text}」\n\n{reply}"
                 send_manychat_message(subscriber_id, full_reply)
 
             finally:
@@ -123,21 +200,26 @@ def process_in_background(subscriber_id: str, media_url: str, last_input: str, f
                     os.unlink(audio_path)
 
         elif last_input and last_input.strip():
-            # 處理文字訊息（非關鍵字觸發）
-            print(f"[BG] 處理文字: {last_input}")
+            # 處理文字訊息
+            print(f"[BG] 處理文字: {last_input[:100]}")
             chat = client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": last_input}
                 ],
-                max_tokens=300
+                max_tokens=400
             )
             reply = chat.choices[0].message.content
             send_manychat_message(subscriber_id, reply)
+        
+        else:
+            print(f"[BG] 沒有可處理的內容 (subscriber_id={subscriber_id})")
 
     except Exception as e:
         print(f"[BG] 背景處理錯誤: {e}")
+        import traceback
+        traceback.print_exc()
         try:
             send_manychat_message(subscriber_id, "抱歉，處理您的訊息時出現問題，請稍後再試或用文字告訴我您的問題 😊")
         except:
@@ -146,7 +228,7 @@ def process_in_background(subscriber_id: str, media_url: str, last_input: str, f
 
 @app.route("/", methods=["GET"])
 def home():
-    return jsonify({"status": "ok", "message": "Lpicture Voice Bot is running!"}), 200
+    return jsonify({"status": "ok", "message": "Lpicture Voice Bot is running! v2.0"}), 200
 
 
 @app.route("/webhook", methods=["GET", "POST"])
@@ -156,16 +238,22 @@ def webhook():
         return jsonify({"status": "ok"}), 200
 
     try:
+        # 嘗試解析 JSON，支援各種格式
+        raw_body = request.get_data(as_text=True)
+        print(f"[WEBHOOK] 原始 Body: {raw_body[:1000]}")
+        
         data = request.get_json(force=True, silent=True) or {}
-        print(f"[WEBHOOK] 收到資料: {json.dumps(data, ensure_ascii=False)[:500]}")
+        print(f"[WEBHOOK] 解析後資料: {json.dumps(data, ensure_ascii=False)[:500]}")
 
-        # 立即提取資料
-        subscriber_id = str(data.get("id") or data.get("subscriber_id") or "")
-        first_name = data.get("first_name", "客人")
-        media_url = data.get("last_input_file_url", "") or ""
-        last_input = data.get("last_input_text", "") or data.get("last_input", "") or ""
+        # 使用強健的提取函數
+        subscriber_id = extract_subscriber_id(data)
+        first_name = data.get("first_name", "") or data.get("name", "") or "朋友"
+        media_url = extract_media_url(data)
+        last_input = extract_text_input(data)
 
-        print(f"[WEBHOOK] subscriber_id={subscriber_id}, media_url={media_url[:50] if media_url else ''}, last_input={last_input[:50] if last_input else ''}")
+        print(f"[WEBHOOK] subscriber_id={subscriber_id}, first_name={first_name}")
+        print(f"[WEBHOOK] media_url={media_url[:80] if media_url else 'EMPTY'}")
+        print(f"[WEBHOOK] last_input={last_input[:80] if last_input else 'EMPTY'}")
 
         # 立即啟動背景執行緒
         if subscriber_id and (media_url or last_input):
@@ -175,26 +263,52 @@ def webhook():
                 daemon=True
             )
             t.start()
+            print(f"[WEBHOOK] 背景執行緒已啟動")
+        else:
+            print(f"[WEBHOOK] 跳過背景處理: subscriber_id={subscriber_id}, has_media={bool(media_url)}, has_text={bool(last_input)}")
 
         # 立即回應 200 OK（必須在 10 秒內）
         return jsonify({"status": "ok"}), 200
 
     except Exception as e:
         print(f"[WEBHOOK] 錯誤: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"status": "ok"}), 200  # 即使出錯也回應 200
 
 
-@app.route("/test", methods=["GET", "POST"])
-def test():
-    """測試端點"""
-    return jsonify({
+@app.route("/debug", methods=["POST", "GET"])
+def debug():
+    """Debug 端點 - 顯示收到的完整 JSON"""
+    raw_body = request.get_data(as_text=True)
+    data = request.get_json(force=True, silent=True) or {}
+    result = {
         "status": "ok",
-        "message": "Lpicture Voice Bot 運作正常！",
-        "received": request.get_json(silent=True) or {}
-    }), 200
+        "raw_body": raw_body[:2000],
+        "parsed_data": data,
+        "extracted": {
+            "subscriber_id": extract_subscriber_id(data),
+            "first_name": data.get("first_name", ""),
+            "media_url": extract_media_url(data),
+            "last_input": extract_text_input(data)
+        }
+    }
+    print(f"[DEBUG] {json.dumps(result, ensure_ascii=False)[:1000]}")
+    return jsonify(result), 200
+
+
+@app.route("/test_send", methods=["GET"])
+def test_send():
+    """測試發送訊息到指定 subscriber_id"""
+    subscriber_id = request.args.get("id", "")
+    message = request.args.get("msg", "👋 Hello from Lpicture Bot！測試訊息")
+    if not subscriber_id:
+        return jsonify({"error": "請提供 ?id=subscriber_id"}), 400
+    result = send_manychat_message(subscriber_id, message)
+    return jsonify({"status": "ok", "result": result}), 200
 
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    print(f"🚀 Lpicture Voice Bot 啟動中... Port {port}")
+    print(f"🚀 Lpicture Voice Bot v2.0 啟動中... Port {port}")
     app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
